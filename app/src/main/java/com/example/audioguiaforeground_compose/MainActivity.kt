@@ -42,12 +42,41 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Card
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+data class EdificioGuia(
+    val id: Int,
+    val nombre: String,
+    val categoria: String,
+    val descripcion: String
+)
+
+val listaEdificiosCampus = listOf(
+    EdificioGuia(1, "Ingeniería de Sistemas", "Académico", "Aulas y oficinas de la escuela profesional de sistemas"),
+    EdificioGuia(2, "Laboratorios de Sistemas", "Académico", "Equipos de cómputo para prácticas"),
+    EdificioGuia(3, "Ciencias de la Computación", "Académico", "Aulas y oficinas de la escuela de ciencias"),
+    EdificioGuia(4, "Biblioteca de Ingenierías", "Servicios", "Salas de lectura y préstamo de libros"),
+    EdificioGuia(5, "Laboratorios de Ciencias", "Académico", "Equipos de cómputo para prácticas"),
+    EdificioGuia(6, "Estadio UNSA", "Deportes", "Pistas de atletismo y cancha oficial"),
+    EdificioGuia(7, "Cancha de Mecánica", "Deportes", "Espacio deportivo al costado de mecánica"),
+    EdificioGuia(8, "Ingeniería de Minas", "Académico", "Aulas y laboratorios de la escuela de minas")
+)
+
 class AudioGuiaService : Service() {
+
     private var job: Job? = null
+    private var tituloActual: String = listaEdificiosCampus[0].nombre
+
     companion object {
         const val ACCION_REPRODUCIR = "com.example.audioguiaforeground_compose.REPRODUCIR"
         const val ACCION_PAUSAR = "com.example.audioguiaforeground_compose.PAUSAR"
         const val ACCION_DETENER = "com.example.audioguiaforeground_compose.DETENER"
+        const val ACCION_CAMBIAR_EDIFICIO = "com.example.audioguiaforeground_compose.CAMBIAR_EDIFICIO"
+        const val EXTRA_TITULO_EDIFICIO = "extra_titulo_edificio"
         private const val ID_CANAL = "canal_audioguia"
         private const val ID_NOTIFICACION = 1
     }
@@ -66,10 +95,20 @@ class AudioGuiaService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val nuevoTitulo = intent?.getStringExtra(EXTRA_TITULO_EDIFICIO)
+        if (!nuevoTitulo.isNullOrBlank()) {
+            tituloActual = nuevoTitulo
+        }
+
         when (intent?.action) {
             ACCION_REPRODUCIR -> {
-                startForeground(ID_NOTIFICACION, construirNotificacion("Biblioteca Central"))
+                startForeground(ID_NOTIFICACION, construirNotificacion(tituloActual))
                 iniciarAvance()
+            }
+            ACCION_CAMBIAR_EDIFICIO -> {
+                // Actualiza el título en la notificación persistente
+                val manager = getSystemService(NotificationManager::class.java)
+                manager.notify(ID_NOTIFICACION, construirNotificacion(tituloActual))
             }
             ACCION_PAUSAR -> job?.cancel()
             ACCION_DETENER -> {
@@ -100,6 +139,7 @@ class AudioGuiaService : Service() {
             .setOngoing(true)
             .build()
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 }
 
@@ -121,6 +161,9 @@ fun PantallaAudioGuia() {
     val context = LocalContext.current
     var reproduciendo by remember { mutableStateOf(false) }
     var enSegundoPlano by remember { mutableStateOf(false) }
+    var indiceEdificio by remember { mutableIntStateOf(0) }
+
+    val edificioActual = listaEdificiosCampus[indiceEdificio]
 
     DisposableEffect(Unit) {
         val observer = LifecycleEventObserver { _, event ->
@@ -135,23 +178,43 @@ fun PantallaAudioGuia() {
             ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
         }
     }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .padding(16.dp)
     ) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Edificio ${indiceEdificio + 1} de ${listaEdificiosCampus.size}: ${edificioActual.nombre}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "Categoría: ${edificioActual.categoria}", fontSize = 14.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = edificioActual.descripcion, fontSize = 14.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         Text(if (reproduciendo) "Reproduciendo audio-guía..." else "Audio-guía detenida")
         if (enSegundoPlano && reproduciendo) {
             Text("La app está en segundo plano: revisa la notificación")
         }
+
         Spacer(modifier = Modifier.height(16.dp))
+
         Row {
             Button(onClick = {
                 reproduciendo = true
                 context.startService(
                     Intent(context, AudioGuiaService::class.java)
                         .setAction(AudioGuiaService.ACCION_REPRODUCIR)
+                        .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, edificioActual.nombre)
                 )
             }) {
                 Text("Reproducir")
@@ -176,6 +239,25 @@ fun PantallaAudioGuia() {
             }) {
                 Text("Detener")
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = {
+                indiceEdificio = (indiceEdificio + 1) % listaEdificiosCampus.size
+                val siguienteEdificio = listaEdificiosCampus[indiceEdificio]
+                if (reproduciendo) {
+                    context.startService(
+                        Intent(context, AudioGuiaService::class.java)
+                            .setAction(AudioGuiaService.ACCION_CAMBIAR_EDIFICIO)
+                            .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, siguienteEdificio.nombre)
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Siguiente edificio")
         }
     }
 }
