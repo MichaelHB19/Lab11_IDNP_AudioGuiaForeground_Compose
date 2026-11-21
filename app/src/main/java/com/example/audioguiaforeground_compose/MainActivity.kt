@@ -50,6 +50,19 @@ import androidx.compose.ui.unit.sp
 
 import android.app.PendingIntent
 
+import android.content.Context
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
+
 data class EdificioGuia(
     val id: Int,
     val nombre: String,
@@ -67,6 +80,35 @@ val listaEdificiosCampus = listOf(
     EdificioGuia(7, "Cancha de Mecánica", "Deportes", "Espacio deportivo al costado de mecánica"),
     EdificioGuia(8, "Ingeniería de Minas", "Académico", "Aulas y laboratorios de la escuela de minas")
 )
+
+@Entity(tableName = "ultimo_edificio")
+data class UltimoEdificioEntity(
+    @PrimaryKey val id: Int = 1,
+    val indiceEdificio: Int,
+    val nombreEdificio: String
+)
+
+@Dao
+interface UltimoEdificioDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun guardarUltimo(registro: UltimoEdificioEntity)
+
+    @Query("SELECT * FROM ultimo_edificio WHERE id = 1")
+    suspend fun obtenerUltimo(): UltimoEdificioEntity?
+}
+
+@Database(entities = [UltimoEdificioEntity::class], version = 1)
+abstract class AudioGuiaDatabase : RoomDatabase() {
+    abstract fun ultimoEdificioDao(): UltimoEdificioDao
+}
+
+fun obtenerBaseDeDatos(context: Context): AudioGuiaDatabase {
+    return Room.databaseBuilder(
+        context.applicationContext,
+        AudioGuiaDatabase::class.java,
+        "audioguia.db"
+    ).build()
+}
 
 class AudioGuiaService : Service() {
 
@@ -201,11 +243,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PantallaAudioGuia() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val dao = remember { obtenerBaseDeDatos(context).ultimoEdificioDao() }
+
     var reproduciendo by remember { mutableStateOf(false) }
     var enSegundoPlano by remember { mutableStateOf(false) }
     var indiceEdificio by remember { mutableIntStateOf(0) }
+    var ultimoGuardado by remember { mutableStateOf<UltimoEdificioEntity?>(null) }
 
     val edificioActual = listaEdificiosCampus[indiceEdificio]
+
+    LaunchedEffect(Unit) {
+        ultimoGuardado = dao.obtenerUltimo()
+    }
 
     DisposableEffect(Unit) {
         val observer = LifecycleEventObserver { _, event ->
@@ -253,6 +303,14 @@ fun PantallaAudioGuia() {
         Row {
             Button(onClick = {
                 reproduciendo = true
+                scope.launch {
+                    val registro = UltimoEdificioEntity(
+                        indiceEdificio = indiceEdificio,
+                        nombreEdificio = edificioActual.nombre
+                    )
+                    dao.guardarUltimo(registro)
+                    ultimoGuardado = registro
+                }
                 context.startService(
                     Intent(context, AudioGuiaService::class.java)
                         .setAction(AudioGuiaService.ACCION_REPRODUCIR)
@@ -290,6 +348,14 @@ fun PantallaAudioGuia() {
                 indiceEdificio = (indiceEdificio + 1) % listaEdificiosCampus.size
                 val siguienteEdificio = listaEdificiosCampus[indiceEdificio]
                 if (reproduciendo) {
+                    scope.launch {
+                        val registro = UltimoEdificioEntity(
+                            indiceEdificio = indiceEdificio,
+                            nombreEdificio = siguienteEdificio.nombre
+                        )
+                        dao.guardarUltimo(registro)
+                        ultimoGuardado = registro
+                    }
                     context.startService(
                         Intent(context, AudioGuiaService::class.java)
                             .setAction(AudioGuiaService.ACCION_CAMBIAR_EDIFICIO)
@@ -300,6 +366,24 @@ fun PantallaAudioGuia() {
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Siguiente edificio")
+        }
+
+        ultimoGuardado?.let { guardado ->
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    indiceEdificio = guardado.indiceEdificio
+                    reproduciendo = true
+                    context.startService(
+                        Intent(context, AudioGuiaService::class.java)
+                            .setAction(AudioGuiaService.ACCION_REPRODUCIR)
+                            .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, guardado.nombreEdificio)
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Continuar: ${guardado.nombreEdificio}")
+            }
         }
     }
 }
