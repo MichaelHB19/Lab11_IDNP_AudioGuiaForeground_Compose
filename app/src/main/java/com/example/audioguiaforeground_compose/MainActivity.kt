@@ -63,22 +63,57 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
+import android.media.MediaPlayer
+
 data class EdificioGuia(
     val id: Int,
     val nombre: String,
     val categoria: String,
-    val descripcion: String
+    val descripcion: String,
+    val audioResId: Int
 )
 
 val listaEdificiosCampus = listOf(
-    EdificioGuia(1, "Ingeniería de Sistemas", "Académico", "Aulas y oficinas de la escuela profesional de sistemas"),
-    EdificioGuia(2, "Laboratorios de Sistemas", "Académico", "Equipos de cómputo para prácticas"),
-    EdificioGuia(3, "Ciencias de la Computación", "Académico", "Aulas y oficinas de la escuela de ciencias"),
-    EdificioGuia(4, "Biblioteca de Ingenierías", "Servicios", "Salas de lectura y préstamo de libros"),
-    EdificioGuia(5, "Laboratorios de Ciencias", "Académico", "Equipos de cómputo para prácticas"),
-    EdificioGuia(6, "Estadio UNSA", "Deportes", "Pistas de atletismo y cancha oficial"),
-    EdificioGuia(7, "Cancha de Mecánica", "Deportes", "Espacio deportivo al costado de mecánica"),
-    EdificioGuia(8, "Ingeniería de Minas", "Académico", "Aulas y laboratorios de la escuela de minas")
+    EdificioGuia(
+        1, "Ingeniería de Sistemas", "Académico",
+        "Aulas y oficinas de la escuela profesional de sistemas",
+        R.raw.audio_ingenieria_sistemas
+    ),
+    EdificioGuia(
+        2, "Laboratorios de Sistemas", "Académico",
+        "Equipos de cómputo para prácticas",
+        R.raw.audio_laboratorios_sistemas
+    ),
+    EdificioGuia(
+        3, "Ciencias de la Computación", "Académico",
+        "Aulas y oficinas de la escuela de ciencias",
+        R.raw.audio_ciencias_computacion
+    ),
+    EdificioGuia(
+        4, "Biblioteca de Ingenierías", "Servicios",
+        "Salas de lectura y préstamo de libros",
+        R.raw.audio_biblioteca_ingenierias
+    ),
+    EdificioGuia(
+        5, "Laboratorios de Ciencias", "Académico",
+        "Equipos de cómputo para prácticas",
+        R.raw.audio_laboratorios_ciencias
+    ),
+    EdificioGuia(
+        6, "Estadio UNSA", "Deportes",
+        "Pistas de atletismo y cancha oficial",
+        R.raw.audio_estadio_unsa
+    ),
+    EdificioGuia(
+        7, "Cancha de Mecánica", "Deportes",
+        "Espacio deportivo al costado de mecánica",
+        R.raw.audio_cancha_mecanica
+    ),
+    EdificioGuia(
+        8, "Ingeniería de Minas", "Académico",
+        "Aulas y laboratorios de la escuela de minas",
+        R.raw.audio_ingenieria_minas
+    )
 )
 
 @Entity(tableName = "ultimo_edificio")
@@ -112,8 +147,10 @@ fun obtenerBaseDeDatos(context: Context): AudioGuiaDatabase {
 
 class AudioGuiaService : Service() {
 
-    private var job: Job? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var tituloActual: String = listaEdificiosCampus[0].nombre
+    private var audioActualResId: Int = listaEdificiosCampus[0].audioResId
+    private var estaPausado: Boolean = false
 
     companion object {
         const val ACCION_REPRODUCIR = "com.example.audioguiaforeground_compose.REPRODUCIR"
@@ -121,6 +158,7 @@ class AudioGuiaService : Service() {
         const val ACCION_DETENER = "com.example.audioguiaforeground_compose.DETENER"
         const val ACCION_CAMBIAR_EDIFICIO = "com.example.audioguiaforeground_compose.CAMBIAR_EDIFICIO"
         const val EXTRA_TITULO_EDIFICIO = "extra_titulo_edificio"
+        const val EXTRA_AUDIO_RES_ID = "extra_audio_res_id"
         private const val ID_CANAL = "canal_audioguia"
         private const val ID_NOTIFICACION = 1
     }
@@ -143,26 +181,44 @@ class AudioGuiaService : Service() {
         if (!nuevoTitulo.isNullOrBlank()) {
             tituloActual = nuevoTitulo
         }
+        val nuevoAudioResId = intent?.getIntExtra(EXTRA_AUDIO_RES_ID, -1) ?: -1
 
         when (intent?.action) {
             ACCION_REPRODUCIR -> {
                 startForeground(ID_NOTIFICACION, construirNotificacion(tituloActual))
-                iniciarAvance()
+                if (nuevoAudioResId != -1 && nuevoAudioResId != audioActualResId) {
+                    audioActualResId = nuevoAudioResId
+                    iniciarAudioNuevo(audioActualResId)
+                } else if (estaPausado && mediaPlayer != null) {
+                    mediaPlayer?.start()
+                    estaPausado = false
+                } else {
+                    if (nuevoAudioResId != -1) audioActualResId = nuevoAudioResId
+                    iniciarAudioNuevo(audioActualResId)
+                }
             }
             ACCION_CAMBIAR_EDIFICIO -> {
-                // Actualiza el título en la notificación persistente
+                if (nuevoAudioResId != -1) {
+                    audioActualResId = nuevoAudioResId
+                    iniciarAudioNuevo(audioActualResId)
+                }
                 val manager = getSystemService(NotificationManager::class.java)
                 manager.notify(ID_NOTIFICACION, construirNotificacion(tituloActual))
             }
             ACCION_PAUSAR -> {
-                job?.cancel()
+                if (mediaPlayer?.isPlaying == true) {
+                    mediaPlayer?.pause()
+                    estaPausado = true
+                }
                 val manager = getSystemService(NotificationManager::class.java)
                 val notificacionPausada = NotificationCompat.Builder(this, ID_CANAL)
                     .setContentTitle(tituloActual)
                     .setContentText("Audio-guía en pausa")
                     .setSmallIcon(android.R.drawable.ic_media_pause)
                     .setOngoing(true)
-                    .addAction(android.R.drawable.ic_delete, "Detener",
+                    .addAction(
+                        android.R.drawable.ic_delete,
+                        "Detener",
                         PendingIntent.getService(
                             this,
                             101,
@@ -174,7 +230,7 @@ class AudioGuiaService : Service() {
                 manager.notify(ID_NOTIFICACION, notificacionPausada)
             }
             ACCION_DETENER -> {
-                job?.cancel()
+                liberarMediaPlayer()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -182,15 +238,26 @@ class AudioGuiaService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun iniciarAvance() {
-        job?.cancel()
-        job = CoroutineScope(Dispatchers.IO).launch {
-            var segundos = 0
-            while (true) {
-                delay(1000)
-                segundos++
+    private fun iniciarAudioNuevo(resId: Int) {
+        liberarMediaPlayer()
+        mediaPlayer = MediaPlayer.create(this, resId)?.apply {
+            setOnCompletionListener {
+                estaPausado = false
             }
+            start()
         }
+        estaPausado = false
+    }
+
+    private fun liberarMediaPlayer() {
+        mediaPlayer?.let {
+            if (it.isPlaying) {
+                it.stop()
+            }
+            it.release()
+        }
+        mediaPlayer = null
+        estaPausado = false
     }
 
     private fun construirNotificacion(titulo: String): Notification {
@@ -222,6 +289,11 @@ class AudioGuiaService : Service() {
             .addAction(android.R.drawable.ic_media_pause, "Pausar", pendingIntentPausar)
             .addAction(android.R.drawable.ic_delete, "Detener", pendingIntentDetener)
             .build()
+    }
+
+    override fun onDestroy() {
+        liberarMediaPlayer()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -315,6 +387,7 @@ fun PantallaAudioGuia() {
                     Intent(context, AudioGuiaService::class.java)
                         .setAction(AudioGuiaService.ACCION_REPRODUCIR)
                         .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, edificioActual.nombre)
+                        .putExtra(AudioGuiaService.EXTRA_AUDIO_RES_ID, edificioActual.audioResId)
                 )
             }) {
                 Text("Reproducir")
@@ -360,6 +433,7 @@ fun PantallaAudioGuia() {
                         Intent(context, AudioGuiaService::class.java)
                             .setAction(AudioGuiaService.ACCION_CAMBIAR_EDIFICIO)
                             .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, siguienteEdificio.nombre)
+                            .putExtra(AudioGuiaService.EXTRA_AUDIO_RES_ID, siguienteEdificio.audioResId)
                     )
                 }
             },
@@ -373,11 +447,13 @@ fun PantallaAudioGuia() {
             Button(
                 onClick = {
                     indiceEdificio = guardado.indiceEdificio
+                    val edificioGuardado = listaEdificiosCampus[guardado.indiceEdificio]
                     reproduciendo = true
                     context.startService(
                         Intent(context, AudioGuiaService::class.java)
                             .setAction(AudioGuiaService.ACCION_REPRODUCIR)
-                            .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, guardado.nombreEdificio)
+                            .putExtra(AudioGuiaService.EXTRA_TITULO_EDIFICIO, edificioGuardado.nombre)
+                            .putExtra(AudioGuiaService.EXTRA_AUDIO_RES_ID, edificioGuardado.audioResId)
                     )
                 },
                 modifier = Modifier.fillMaxWidth()
