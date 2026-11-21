@@ -48,6 +48,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
+import android.app.PendingIntent
+
 data class EdificioGuia(
     val id: Int,
     val nombre: String,
@@ -110,7 +112,25 @@ class AudioGuiaService : Service() {
                 val manager = getSystemService(NotificationManager::class.java)
                 manager.notify(ID_NOTIFICACION, construirNotificacion(tituloActual))
             }
-            ACCION_PAUSAR -> job?.cancel()
+            ACCION_PAUSAR -> {
+                job?.cancel()
+                val manager = getSystemService(NotificationManager::class.java)
+                val notificacionPausada = NotificationCompat.Builder(this, ID_CANAL)
+                    .setContentTitle(tituloActual)
+                    .setContentText("Audio-guía en pausa")
+                    .setSmallIcon(android.R.drawable.ic_media_pause)
+                    .setOngoing(true)
+                    .addAction(android.R.drawable.ic_delete, "Detener",
+                        PendingIntent.getService(
+                            this,
+                            101,
+                            Intent(this, AudioGuiaService::class.java).setAction(ACCION_DETENER),
+                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                        )
+                    )
+                    .build()
+                manager.notify(ID_NOTIFICACION, notificacionPausada)
+            }
             ACCION_DETENER -> {
                 job?.cancel()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -132,11 +152,33 @@ class AudioGuiaService : Service() {
     }
 
     private fun construirNotificacion(titulo: String): Notification {
+        val intentPausar = Intent(this, AudioGuiaService::class.java).apply {
+            action = ACCION_PAUSAR
+        }
+        val pendingIntentPausar = PendingIntent.getService(
+            this,
+            100,
+            intentPausar,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val intentDetener = Intent(this, AudioGuiaService::class.java).apply {
+            action = ACCION_DETENER
+        }
+        val pendingIntentDetener = PendingIntent.getService(
+            this,
+            101,
+            intentDetener,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         return NotificationCompat.Builder(this, ID_CANAL)
             .setContentTitle(titulo)
             .setContentText("Reproduciendo audio-guía")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_media_pause, "Pausar", pendingIntentPausar)
+            .addAction(android.R.drawable.ic_delete, "Detener", pendingIntentDetener)
             .build()
     }
 
